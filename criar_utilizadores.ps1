@@ -120,9 +120,13 @@ function Get-TurmaMailNickname {
     )
 
     $anoNormalizado = $Ano.Trim() -replace '\u00C2\u00BA', '\u00BA'
-    $anoMatch = [regex]::Match($anoNormalizado, '^\s*(\d+)\s*(?:\u00BA|o)?\s*ano\s*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $anoMatch = [regex]::Match(
+        $anoNormalizado,
+        '^\s*(\d{1,2})\s*(?:(?:[\.\-]?\s*(?:\u00BA|\u00B0|o))?\s*ano)?\s*$',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
     if (-not $anoMatch.Success) {
-        throw "O valor '$Ano' na coluna 'Ano' deve ter o formato '5o ano'."
+        throw "O valor '$Ano' na coluna 'Ano' deve ter um formato como '1', '1o ano', '1º ano' ou '1.º ano'."
     }
 
     $turmaNormalizada = $Turma.Trim().ToUpperInvariant()
