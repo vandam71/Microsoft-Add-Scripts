@@ -25,6 +25,26 @@ function Write-Log {
     Write-Host "[$timestamp] $Message" -ForegroundColor $Color
 }
 
+function Ensure-Module {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if (-not (Get-Module -ListAvailable -Name $Name)) {
+        $resposta = Read-Host "O modulo '$Name' nao esta instalado. Pretende instala-lo para o utilizador atual? (S/N)"
+        if ($resposta -notmatch '^[SsYy]$') {
+            throw "O modulo necessario '$Name' nao esta instalado."
+        }
+
+        Write-Log "A instalar o modulo '$Name'..." Cyan
+        Install-Module -Name $Name -Scope CurrentUser -Repository PSGallery -Force -ErrorAction Stop
+    }
+
+    Write-Log "A importar o modulo '$Name'..." Cyan
+    Import-Module $Name -ErrorAction Stop
+}
+
 function Import-UsersCsv {
     param(
         [Parameter(Mandatory)]
@@ -52,8 +72,7 @@ $tipoUtilizador = if ($Alunos) { 'alunos' } else { 'docentes' }
 $role = if ($Docentes) { 'Owner' } else { 'Member' }
 
 try {
-    Write-Log 'A importar o modulo MicrosoftTeams...' Cyan
-    Import-Module MicrosoftTeams -ErrorAction Stop
+    Ensure-Module -Name MicrosoftTeams
 
     Write-Log 'A ligar ao Microsoft Teams...' Cyan
     Connect-MicrosoftTeams -ErrorAction Stop | Out-Null

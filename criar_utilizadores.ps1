@@ -28,6 +28,26 @@ function Write-Log {
     Write-Host "[$timestamp] $Message" -ForegroundColor $Color
 }
 
+function Ensure-Module {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if (-not (Get-Module -ListAvailable -Name $Name)) {
+        $resposta = Read-Host "O modulo '$Name' nao esta instalado. Pretende instala-lo para o utilizador atual? (S/N)"
+        if ($resposta -notmatch '^[SsYy]$') {
+            throw "O modulo necessario '$Name' nao esta instalado."
+        }
+
+        Write-Log "A instalar o modulo '$Name'..." Cyan
+        Install-Module -Name $Name -Scope CurrentUser -Repository PSGallery -Force -ErrorAction Stop
+    }
+
+    Write-Log "A importar o modulo '$Name'..." Cyan
+    Import-Module $Name -ErrorAction Stop
+}
+
 function Import-UsersCsv {
     param(
         [Parameter(Mandatory)]
@@ -99,9 +119,10 @@ function Get-TurmaMailNickname {
         [string]$AcademicYear
     )
 
-    $anoMatch = [regex]::Match($Ano.Trim(), '^\s*(\d+)\s*(?:º|o)?\s*ano\s*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $anoNormalizado = $Ano.Trim() -replace '\u00C2\u00BA', '\u00BA'
+    $anoMatch = [regex]::Match($anoNormalizado, '^\s*(\d+)\s*(?:\u00BA|o)?\s*ano\s*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $anoMatch.Success) {
-        throw "O valor '$Ano' na coluna 'Ano' deve ter o formato '5º ano'."
+        throw "O valor '$Ano' na coluna 'Ano' deve ter o formato '5o ano'."
     }
 
     $turmaNormalizada = $Turma.Trim().ToUpperInvariant()
@@ -113,6 +134,32 @@ function Get-TurmaMailNickname {
     return "$anoNumero-$anoNumero$turmaNormalizada-$AcademicYear"
 }
 
+function Get-OrCreateClassTeam {
+    param(
+        [Parameter(Mandatory)]
+        [string]$MailNickname
+    )
+
+    $equipas = @(Get-Team -MailNickName $MailNickname -ErrorAction Stop)
+    if ($equipas.Count -gt 1) {
+        throw "Foram encontradas $($equipas.Count) equipas com MailNickName '$MailNickname'."
+    }
+
+    if ($equipas.Count -eq 1) {
+        return [pscustomobject]@{
+            Team = $equipas[0]
+            Created = $false
+        }
+    }
+
+    Write-Log "A criar a equipa de turma '$MailNickname' a partir do modelo Turma..." Cyan
+    $equipaCriada = New-Team -DisplayName $MailNickname -MailNickname $MailNickname -Template EDU_Class -ErrorAction Stop
+    return [pscustomobject]@{
+        Team = $equipaCriada
+        Created = $true
+    }
+}
+
 if (-not (Test-Path -LiteralPath $Ficheiro -PathType Leaf)) {
     throw "O ficheiro CSV '$Ficheiro' nao foi encontrado."
 }
@@ -121,11 +168,10 @@ $tipoUtilizador = if ($Alunos) { 'alunos' } else { 'docentes' }
 $nomeGrupo = if ($Alunos) { 'O365-Alunos' } else { 'O365-Professores' }
 
 try {
-    Write-Log 'A importar os modulos Microsoft Graph...' Cyan
-    Import-Module Microsoft.Graph.Users -ErrorAction Stop
-    Import-Module Microsoft.Graph.Groups -ErrorAction Stop
+    Ensure-Module -Name Microsoft.Graph.Users
+    Ensure-Module -Name Microsoft.Graph.Groups
     if ($Alunos) {
-        Import-Module MicrosoftTeams -ErrorAction Stop
+        Ensure-Module -Name MicrosoftTeams
     }
 
     Write-Log 'A ligar ao Microsoft Graph...' Cyan
@@ -163,6 +209,7 @@ try {
     $adicionadosAoGrupo = 0
     $jaNoGrupo = 0
     $adicionadosATurma = 0
+    $turmasCriadas = 0
     $equipasTurma = @{}
     $falhados = 0
 
@@ -220,11 +267,11 @@ try {
                 $mailNicknameTurma = Get-TurmaMailNickname -Ano ([string]$utilizador.Ano) -Turma ([string]$utilizador.Turma) -AcademicYear $AnoLetivo
 
                 if (-not $equipasTurma.ContainsKey($mailNicknameTurma)) {
-                    $equipas = @(Get-Team -MailNickName $mailNicknameTurma -ErrorAction Stop)
-                    if ($equipas.Count -ne 1) {
-                        throw "Esperava uma equipa com MailNickName '$mailNicknameTurma', mas foram encontradas $($equipas.Count)."
+                    $resultadoEquipa = Get-OrCreateClassTeam -MailNickname $mailNicknameTurma
+                    if ($resultadoEquipa.Created) {
+                        $turmasCriadas++
                     }
-                    $equipasTurma[$mailNicknameTurma] = $equipas[0]
+                    $equipasTurma[$mailNicknameTurma] = $resultadoEquipa.Team
                 }
 
                 Add-TeamUser -GroupId $equipasTurma[$mailNicknameTurma].GroupId -User $upn -Role Member -ErrorAction Stop
@@ -238,7 +285,7 @@ try {
         }
     }
 
-    Write-Log "Concluido: $processados processados, $criados criados, $existentes ja existiam, $adicionadosAoGrupo adicionados ao grupo, $jaNoGrupo ja pertenciam ao grupo, $adicionadosATurma adicionados a turma, $falhados falhados." Cyan
+    Write-Log "Concluido: $processados processados, $criados criados, $existentes ja existiam, $adicionadosAoGrupo adicionados ao grupo, $jaNoGrupo ja pertenciam ao grupo, $turmasCriadas turmas criadas, $adicionadosATurma adicionados a turma, $falhados falhados." Cyan
 
     if ($falhados -gt 0) {
         exit 1
