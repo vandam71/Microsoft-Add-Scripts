@@ -120,7 +120,7 @@ function Get-TurmaMailNickname {
     )
 
     $anoNormalizado = $Ano.Trim() -replace '\u00C2\u00BA', '\u00BA'
-    $anoMatch = [regex]::Match($anoNormalizado, '\d{1,2}')
+    $anoMatch = [regex]::Match($anoNormalizado, '(\d{1,2})')
     if (-not $anoMatch.Success) {
         throw "O valor '$Ano' na coluna 'Ano' deve incluir pelo menos um numero de ano (por exemplo: '1', '1º ano' ou '1 - turma D')."
     }
@@ -130,7 +130,10 @@ function Get-TurmaMailNickname {
         throw "O valor '$Turma' na coluna 'Turma' deve conter apenas letras ou numeros."
     }
 
-    $anoNumero = $anoMatch.Groups[1].Value
+    $anoNumero = $anoMatch.Groups[1].Value.Trim()
+    if ([string]::IsNullOrWhiteSpace($anoNumero)) {
+        throw "Nao foi possivel extrair o numero do ano a partir de '$Ano'."
+    }
     return "$anoNumero-$anoNumero$turmaNormalizada-$AcademicYear"
 }
 
