@@ -25,6 +25,25 @@ function Write-Log {
     Write-Host "[$timestamp] $Message" -ForegroundColor $Color
 }
 
+function Import-UsersCsv {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $header = Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop
+    $hasSemicolon = $header.Contains(';')
+    $hasComma = $header.Contains(',')
+
+    if ($hasSemicolon -eq $hasComma) {
+        throw "Nao foi possivel determinar o delimitador do CSV '$Path'. Use apenas ponto e virgula (;) ou virgula (,) no cabecalho."
+    }
+
+    $delimiter = if ($hasSemicolon) { ';' } else { ',' }
+    Write-Log "CSV detetado com delimitador '$delimiter'." Cyan
+    return @(Import-Csv -LiteralPath $Path -Delimiter $delimiter -ErrorAction Stop)
+}
+
 if (-not (Test-Path -LiteralPath $Ficheiro -PathType Leaf)) {
     throw "O ficheiro CSV '$Ficheiro' nao foi encontrado."
 }
@@ -40,7 +59,7 @@ try {
     Connect-MicrosoftTeams -ErrorAction Stop | Out-Null
     Write-Log "Ligacao estabelecida. A adicionar $tipoUtilizador como $role." Green
 
-    $utilizadores = @(Import-Csv -LiteralPath $Ficheiro -Delimiter ';' -ErrorAction Stop)
+    $utilizadores = @(Import-UsersCsv -Path $Ficheiro)
     if ($utilizadores.Count -eq 0) {
         throw "O ficheiro CSV '$Ficheiro' nao contem registos."
     }

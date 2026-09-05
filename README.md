@@ -6,7 +6,7 @@
 
 - PowerShell 7 ou Windows PowerShell com o modulo `MicrosoftTeams` instalado.
 - Permissoes para gerir os membros das equipas de destino.
-- Um CSV separado por ponto e virgula, com as colunas `equipa` e `email`.
+- Um CSV separado por ponto e virgula ou virgula, com as colunas `equipa` e `email`.
 
 Exemplo de CSV:
 
@@ -36,11 +36,11 @@ Escolha apenas uma das opcoes: `-Alunos` ou `-Docentes`. O script mostra o progr
 
 `criar_utilizadores.ps1` cria contas no Microsoft Entra ID e adiciona-as ao grupo que define as respetivas permissoes. Requer os modulos `Microsoft.Graph.Users` e `Microsoft.Graph.Groups`, e as permissoes delegadas `User.ReadWrite.All` e `GroupMember.ReadWrite.All` para a conta que inicia sessao.
 
-O CSV tambem e separado por ponto e virgula e requer as colunas `nome`, `apelido`, `upn` e `password`:
+O CSV aceita ponto e virgula ou virgula como delimitador e usa diretamente a exportacao da base de dados. As colunas `Processo`, `Nome` e `NIF` sao obrigatorias; `Ano` e `Turma` sao usadas para associar alunos a uma turma:
 
 ```csv
-nome;apelido;upn;password
-Ana;Silva;ana.silva@contoso.onmicrosoft.com;PasswordTemporaria123!
+Processo;Nome;NIF;Ano;Turma
+7738;Tomas Pereira Coelho;288519868;5º ano;A
 ```
 
 ```powershell
@@ -48,4 +48,12 @@ Ana;Silva;ana.silva@contoso.onmicrosoft.com;PasswordTemporaria123!
 .\criar_utilizadores.ps1 -Docentes -Ficheiro .\novos-docentes.csv
 ```
 
-O `upn` e o endereco utilizado para iniciar sessao, normalmente o email do utilizador, e tem de usar um dominio verificado no tenant. O script associa alunos ao grupo `O365-Alunos` e docentes ao grupo `O365-Professores`. Tambem adiciona ao grupo contas cujo UPN ja exista; nunca altera a palavra-passe de uma conta existente. As novas contas mantem a palavra-passe indicada no CSV e nao sao obrigadas a altera-la no primeiro inicio de sessao. O CSV contem palavras-passe, por isso deve ser guardado, partilhado e removido de acordo com as regras de seguranca da organizacao.
+O delimitador e detetado automaticamente pelo cabecalho. Nao misture ponto e virgula e virgula na mesma linha de cabecalho. O `upn` e criado como `Processo@alunos.amadeo.pt`. O primeiro nome torna-se o `nome`; os restantes tornam-se o `apelido`. A palavra-passe de novos alunos e `Aluno` seguido dos primeiros cinco algarismos do NIF e `#` (por exemplo, `Aluno28851#`); para docentes, o prefixo e `Docente`.
+
+O script associa alunos ao grupo `O365-Alunos` e docentes ao grupo `O365-Professores`. Para alunos com `Turma` preenchida, tambem adiciona a conta a equipa com o `MailNickName` `<ano>-<ano><turma>-<ano-letivo>`; por exemplo, `5º ano` e `A` resultam em `5-5A-2026-2027`. O ano letivo e calculado automaticamente a partir da data atual e pode ser definido explicitamente:
+
+```powershell
+.\criar_utilizadores.ps1 -Alunos -Ficheiro .\novos-alunos.csv -AnoLetivo 2026-2027
+```
+
+Tambem adiciona ao grupo contas cujo UPN ja exista; nunca altera a palavra-passe de uma conta existente. As novas contas nao sao obrigadas a alterar a palavra-passe no primeiro inicio de sessao.

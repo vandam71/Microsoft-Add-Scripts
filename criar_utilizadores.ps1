@@ -8,7 +8,10 @@ param(
 
     [Parameter(Mandatory, Position = 0)]
     [ValidateNotNullOrEmpty()]
-    [string]$Ficheiro
+    [string]$Ficheiro,
+
+    [ValidatePattern('^\d{4}-\d{4}$')]
+    [string]$AnoLetivo = $(if ((Get-Date).Month -ge 8) { "$(Get-Date -Format 'yyyy')-$((Get-Date).Year + 1)" } else { "$((Get-Date).Year - 1)-$(Get-Date -Format 'yyyy')" })
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,6 +28,91 @@ function Write-Log {
     Write-Host "[$timestamp] $Message" -ForegroundColor $Color
 }
 
+function Import-UsersCsv {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $header = Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop
+    $hasSemicolon = $header.Contains(';')
+    $hasComma = $header.Contains(',')
+
+    if ($hasSemicolon -eq $hasComma) {
+        throw "Nao foi possivel determinar o delimitador do CSV '$Path'. Use apenas ponto e virgula (;) ou virgula (,) no cabecalho."
+    }
+
+    $delimiter = if ($hasSemicolon) { ';' } else { ',' }
+    Write-Log "CSV detetado com delimitador '$delimiter'." Cyan
+    return @(Import-Csv -LiteralPath $Path -Delimiter $delimiter -ErrorAction Stop)
+}
+
+function Get-AccountDetails {
+    param(
+        [Parameter(Mandatory)]
+        [psobject]$Record,
+
+        [Parameter(Mandatory)]
+        [string]$UserType
+    )
+
+    $processo = ([string]$Record.Processo).Trim()
+    $nomeCompleto = ([string]$Record.Nome).Trim() -replace '\s+', ' '
+    $nif = ([string]$Record.NIF).Trim()
+
+    if ([string]::IsNullOrWhiteSpace($processo) -or
+        [string]::IsNullOrWhiteSpace($nomeCompleto) -or
+        [string]::IsNullOrWhiteSpace($nif)) {
+        throw "As colunas 'Processo', 'Nome' e 'NIF' sao obrigatorias."
+    }
+
+    $partesNome = @($nomeCompleto -split ' ' | Where-Object { $_ })
+    if ($partesNome.Count -lt 2) {
+        throw "O campo 'Nome' deve incluir pelo menos primeiro nome e apelido."
+    }
+
+    $nifDigits = $nif -replace '\D', ''
+    if ($nifDigits.Length -lt 5) {
+        throw "O campo 'NIF' tem de conter pelo menos cinco algarismos."
+    }
+
+    $prefixoPassword = if ($UserType -eq 'alunos') { 'Aluno' } else { 'Docente' }
+    return [pscustomobject]@{
+        Processo = $processo
+        Nome = $partesNome[0]
+        Apelido = ($partesNome[1..($partesNome.Count - 1)] -join ' ')
+        NomeApresentacao = $nomeCompleto
+        Upn = "$processo@alunos.amadeo.pt"
+        Password = "$prefixoPassword$($nifDigits.Substring(0, 5))#"
+    }
+}
+
+function Get-TurmaMailNickname {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Ano,
+
+        [Parameter(Mandatory)]
+        [string]$Turma,
+
+        [Parameter(Mandatory)]
+        [string]$AcademicYear
+    )
+
+    $anoMatch = [regex]::Match($Ano.Trim(), '^\s*(\d+)\s*(?:º|o)?\s*ano\s*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $anoMatch.Success) {
+        throw "O valor '$Ano' na coluna 'Ano' deve ter o formato '5º ano'."
+    }
+
+    $turmaNormalizada = $Turma.Trim().ToUpperInvariant()
+    if ($turmaNormalizada -notmatch '^[A-Z0-9]+$') {
+        throw "O valor '$Turma' na coluna 'Turma' deve conter apenas letras ou numeros."
+    }
+
+    $anoNumero = $anoMatch.Groups[1].Value
+    return "$anoNumero-$anoNumero$turmaNormalizada-$AcademicYear"
+}
+
 if (-not (Test-Path -LiteralPath $Ficheiro -PathType Leaf)) {
     throw "O ficheiro CSV '$Ficheiro' nao foi encontrado."
 }
@@ -36,10 +124,17 @@ try {
     Write-Log 'A importar os modulos Microsoft Graph...' Cyan
     Import-Module Microsoft.Graph.Users -ErrorAction Stop
     Import-Module Microsoft.Graph.Groups -ErrorAction Stop
+    if ($Alunos) {
+        Import-Module MicrosoftTeams -ErrorAction Stop
+    }
 
     Write-Log 'A ligar ao Microsoft Graph...' Cyan
     Connect-MgGraph -Scopes 'User.ReadWrite.All', 'GroupMember.ReadWrite.All' -NoWelcome -ErrorAction Stop
     Write-Log "Ligacao estabelecida. A criar utilizadores do tipo '$tipoUtilizador' e a adiciona-los ao grupo '$nomeGrupo'." Green
+    if ($Alunos) {
+        Write-Log 'A ligar ao Microsoft Teams para associar os alunos as turmas...' Cyan
+        Connect-MicrosoftTeams -ErrorAction Stop | Out-Null
+    }
 
     $nomeGrupoFilter = $nomeGrupo.Replace("'", "''")
     $grupos = @(Get-MgGroup -Filter "displayName eq '$nomeGrupoFilter'" -ErrorAction Stop)
@@ -57,7 +152,7 @@ try {
         $membrosDoGrupo[$_.Id] = $true
     }
 
-    $utilizadores = @(Import-Csv -LiteralPath $Ficheiro -Delimiter ';' -ErrorAction Stop)
+    $utilizadores = @(Import-UsersCsv -Path $Ficheiro)
     if ($utilizadores.Count -eq 0) {
         throw "O ficheiro CSV '$Ficheiro' nao contem registos."
     }
@@ -67,25 +162,16 @@ try {
     $existentes = 0
     $adicionadosAoGrupo = 0
     $jaNoGrupo = 0
+    $adicionadosATurma = 0
+    $equipasTurma = @{}
     $falhados = 0
 
     foreach ($utilizador in $utilizadores) {
         $processados++
-        $nome = ([string]$utilizador.nome).Trim()
-        $apelido = ([string]$utilizador.apelido).Trim()
-        $upn = ([string]$utilizador.upn).Trim()
-        $password = ([string]$utilizador.password).Trim()
-
-        if ([string]::IsNullOrWhiteSpace($nome) -or
-            [string]::IsNullOrWhiteSpace($apelido) -or
-            [string]::IsNullOrWhiteSpace($upn) -or
-            [string]::IsNullOrWhiteSpace($password)) {
-            $falhados++
-            Write-Log "Registo $processados ignorado: as colunas 'nome', 'apelido', 'upn' e 'password' sao obrigatorias." Yellow
-            continue
-        }
 
         try {
+            $contaDetalhes = Get-AccountDetails -Record $utilizador -UserType $tipoUtilizador
+            $upn = $contaDetalhes.Upn
             Write-Log "[$processados/$($utilizadores.Count)] A verificar o utilizador '$upn'..."
             $upnFilter = $upn.Replace("'", "''")
             $existente = @(Get-MgUser -Filter "userPrincipalName eq '$upnFilter'" -ErrorAction Stop)
@@ -97,39 +183,54 @@ try {
             }
 
             if ($existente.Count -eq 0) {
-                $nomeApresentacao = "$nome $apelido"
                 $mailNickname = ($upn -split '@')[0]
                 $novoUtilizador = @{
                     AccountEnabled = $true
-                    DisplayName = $nomeApresentacao
-                    GivenName = $nome
-                    Surname = $apelido
+                    DisplayName = $contaDetalhes.NomeApresentacao
+                    GivenName = $contaDetalhes.Nome
+                    Surname = $contaDetalhes.Apelido
                     MailNickname = $mailNickname
                     UserPrincipalName = $upn
                     PasswordProfile = @{
                         ForceChangePasswordNextSignIn = $false
-                        Password = $password
+                        Password = $contaDetalhes.Password
                     }
                 }
 
                 $conta = New-MgUser -BodyParameter $novoUtilizador -ErrorAction Stop
                 $criados++
-                Write-Log "Criado: '$nomeApresentacao' ($upn)." Green
+                Write-Log "Criado: '$($contaDetalhes.NomeApresentacao)' ($upn)." Green
             }
 
             if ($membrosDoGrupo.ContainsKey($conta.Id)) {
                 $jaNoGrupo++
                 Write-Log "O utilizador '$upn' ja pertence ao grupo '$nomeGrupo'." Yellow
-                continue
+            }
+            else {
+                $referenciaUtilizador = @{
+                    '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($conta.Id)"
+                }
+                New-MgGroupMemberByRef -GroupId $grupo.Id -BodyParameter $referenciaUtilizador -ErrorAction Stop
+                $membrosDoGrupo[$conta.Id] = $true
+                $adicionadosAoGrupo++
+                Write-Log "Adicionado: '$upn' ao grupo '$nomeGrupo'." Green
             }
 
-            $referenciaUtilizador = @{
-                '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($conta.Id)"
+            if ($Alunos -and -not [string]::IsNullOrWhiteSpace(([string]$utilizador.Turma))) {
+                $mailNicknameTurma = Get-TurmaMailNickname -Ano ([string]$utilizador.Ano) -Turma ([string]$utilizador.Turma) -AcademicYear $AnoLetivo
+
+                if (-not $equipasTurma.ContainsKey($mailNicknameTurma)) {
+                    $equipas = @(Get-Team -MailNickName $mailNicknameTurma -ErrorAction Stop)
+                    if ($equipas.Count -ne 1) {
+                        throw "Esperava uma equipa com MailNickName '$mailNicknameTurma', mas foram encontradas $($equipas.Count)."
+                    }
+                    $equipasTurma[$mailNicknameTurma] = $equipas[0]
+                }
+
+                Add-TeamUser -GroupId $equipasTurma[$mailNicknameTurma].GroupId -User $upn -Role Member -ErrorAction Stop
+                $adicionadosATurma++
+                Write-Log "Adicionado: '$upn' a turma '$mailNicknameTurma'." Green
             }
-            New-MgGroupMemberByRef -GroupId $grupo.Id -BodyParameter $referenciaUtilizador -ErrorAction Stop
-            $membrosDoGrupo[$conta.Id] = $true
-            $adicionadosAoGrupo++
-            Write-Log "Adicionado: '$upn' ao grupo '$nomeGrupo'." Green
         }
         catch {
             $falhados++
@@ -137,7 +238,7 @@ try {
         }
     }
 
-    Write-Log "Concluido: $processados processados, $criados criados, $existentes ja existiam, $adicionadosAoGrupo adicionados ao grupo, $jaNoGrupo ja pertenciam ao grupo, $falhados falhados." Cyan
+    Write-Log "Concluido: $processados processados, $criados criados, $existentes ja existiam, $adicionadosAoGrupo adicionados ao grupo, $jaNoGrupo ja pertenciam ao grupo, $adicionadosATurma adicionados a turma, $falhados falhados." Cyan
 
     if ($falhados -gt 0) {
         exit 1
