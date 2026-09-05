@@ -1,6 +1,7 @@
 # Microsoft-Add-Scripts
 
 `adicionar_utilizadores.ps1` adiciona utilizadores a equipas do Microsoft Teams a partir de um ficheiro CSV.
+`limpar_equipa.ps1` remove todos os membros (alunos e docentes) de uma equipa existente, para permitir uma nova carga de utilizadores.
 
 ## Requisitos
 
@@ -57,3 +58,11 @@ O script associa alunos ao grupo `O365-Alunos` e docentes ao grupo `O365-Profess
 ```
 
 Tambem adiciona ao grupo contas cujo UPN ja exista; nunca altera a palavra-passe de uma conta existente. As novas contas nao sao obrigadas a alterar a palavra-passe no primeiro inicio de sessao.
+
+## Limpar equipa
+
+`limpar_equipa.ps1` liga ao Microsoft Teams, encontra uma equipa pelo `MailNickName` e remove todos os utilizadores dessa equipa.
+
+```powershell
+.\limpar_equipa.ps1 -Equipa equipa-para-limpar
+```
