@@ -36,7 +36,7 @@ Escolha apenas uma das opcoes: `-Alunos` ou `-Docentes`. O script mostra o progr
 
 `criar_utilizadores.ps1` cria contas no Microsoft Entra ID e adiciona-as ao grupo que define as respetivas permissoes. O script verifica os modulos `Microsoft.Graph.Users` e `Microsoft.Graph.Groups` e pede autorizacao para os instalar para o utilizador atual quando necessario. Para `-Alunos`, tambem verifica o modulo `MicrosoftTeams` para associar os alunos as turmas. A conta que inicia sessao necessita das permissoes delegadas `User.ReadWrite.All` e `GroupMember.ReadWrite.All`.
 
-O CSV aceita ponto e virgula ou virgula como delimitador e usa diretamente a exportacao da base de dados. As colunas `Processo`, `Nome` e `NIF` sao obrigatorias; `Ano` e `Turma` sao usadas para associar alunos a uma turma. A coluna `Ano` aceita formatos como `1`, `1o ano`, `1º ano` e `1.º ano`:
+O CSV aceita ponto e virgula ou virgula como delimitador e usa diretamente a exportacao da base de dados. As colunas `Processo`, `Nome` e `NIF` sao obrigatorias; `Ano` e `Turma` sao usadas para associar alunos a uma turma. Na coluna `Ano`, o script extrai apenas o primeiro numero e ignora o resto do texto (por exemplo: `1`, `1º ano`, `Ano 1`, `1 - turma D`):
 
 ```csv
 Processo;Nome;NIF;Ano;Turma

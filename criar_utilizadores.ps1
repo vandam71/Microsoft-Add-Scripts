@@ -120,13 +120,9 @@ function Get-TurmaMailNickname {
     )
 
     $anoNormalizado = $Ano.Trim() -replace '\u00C2\u00BA', '\u00BA'
-    $anoMatch = [regex]::Match(
-        $anoNormalizado,
-        '^\s*(\d{1,2})\s*(?:(?:[\.\-]?\s*(?:\u00BA|\u00B0|o))?\s*ano)?\s*$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
+    $anoMatch = [regex]::Match($anoNormalizado, '\d{1,2}')
     if (-not $anoMatch.Success) {
-        throw "O valor '$Ano' na coluna 'Ano' deve ter um formato como '1', '1o ano', '1º ano' ou '1.º ano'."
+        throw "O valor '$Ano' na coluna 'Ano' deve incluir pelo menos um numero de ano (por exemplo: '1', '1º ano' ou '1 - turma D')."
     }
 
     $turmaNormalizada = $Turma.Trim().ToUpperInvariant()
